@@ -1,0 +1,225 @@
+═══════════════════════════════════════════════════════════════
+CV TAILOR PRO — COMPLETE SETUP GUIDE
+═══════════════════════════════════════════════════════════════
+Follow each step in order. Total time: ~45 minutes.
+═══════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────
+STEP 1 — SET UP SUPABASE DATABASE (10 mins)
+────────────────────────────────────────────────────────────────
+1. Go to https://supabase.com → log in → New Project
+2. Name it "cvtailor", choose a strong password, click Create
+3. Wait ~2 mins for it to provision
+
+4. Go to: SQL Editor → New Query
+5. Open supabase-schema.sql from this folder
+6. Paste ALL contents into the editor → click Run
+   ✓ You should see "Success. No rows returned"
+
+7. Go to: Project Settings → API → copy these 3 values:
+   • Project URL       → looks like https://xxxxx.supabase.co
+   • anon/public key   → long JWT starting with eyJ...
+   • service_role key  → longer JWT (KEEP SECRET — server only)
+
+────────────────────────────────────────────────────────────────
+STEP 2 — SET UP CLERK AUTH (5 mins)
+────────────────────────────────────────────────────────────────
+1. Go to https://clerk.com → log in → Add Application
+2. Name: "CV Tailor Pro"
+3. Sign-in options: Email address + Google (recommended)
+4. Click Create Application
+
+5. Go to: API Keys → copy:
+   • Publishable key   → pk_live_xxxx (or pk_test_ for testing)
+   • Secret key        → sk_live_xxxx
+
+────────────────────────────────────────────────────────────────
+STEP 3 — SET UP STRIPE (10 mins)
+────────────────────────────────────────────────────────────────
+1. Go to https://dashboard.stripe.com → log in
+   ⚠ Start in TEST MODE (toggle top-left) — switch to live later
+
+2. Go to: Developers → API Keys → copy:
+   • Publishable key   → pk_test_xxxx
+   • Secret key        → sk_test_xxxx
+
+3. CREATE THE 4 SUBSCRIPTION PRODUCTS:
+   Go to: Products → Add Product → for each plan below:
+
+   ┌─────────────┬────────────┬───────────────────────────────┐
+   │ Plan        │ Price      │ Billing                        │
+   ├─────────────┼────────────┼───────────────────────────────┤
+   │ Starter     │ £3.00      │ Recurring · Monthly            │
+   │ Growth      │ £5.00      │ Recurring · Monthly            │
+   │ Pro         │ £10.00     │ Recurring · Monthly            │
+   │ Unlimited   │ £18.00     │ Recurring · Monthly            │
+   └─────────────┴────────────┴───────────────────────────────┘
+
+   After creating each product, click it → copy the Price ID
+   (looks like: price_1OxxxxxxxxxxxxxxxxxxxxxxxxxxxxYZ)
+
+4. ENABLE CUSTOMER PORTAL (so users can cancel/upgrade):
+   Go to: Settings → Billing → Customer Portal → Activate
+
+5. WEBHOOK — come back to this after Step 5 (you need the URL)
+
+────────────────────────────────────────────────────────────────
+STEP 4 — DEPLOY TO VERCEL (5 mins)
+────────────────────────────────────────────────────────────────
+1. Go to https://github.com → Create new repository
+   Name: cvtailor-pro | Set to Public | Don't initialise with files
+
+2. Upload files:
+   a. Click "uploading an existing file"
+   b. Drag the ENTIRE contents of this folder into the browser
+   c. Make sure ALL subfolders are included (pages/, lib/, styles/)
+   d. Click "Commit changes"
+
+3. Go to https://vercel.com → log in → Add New Project
+4. Import your GitHub repo "cvtailor-pro"
+5. Click Deploy (ignore any build warnings for now)
+6. Wait ~2 mins → you get a URL like:
+   ✓ https://cvtailor-pro-xxxx.vercel.app  ← YOUR LIVE URL
+
+────────────────────────────────────────────────────────────────
+STEP 5 — ADD ENVIRONMENT VARIABLES TO VERCEL (5 mins)
+────────────────────────────────────────────────────────────────
+In Vercel → your project → Settings → Environment Variables
+Add each one below (Name + Value → Save):
+
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY     pk_live_xxxx
+  CLERK_SECRET_KEY                      sk_live_xxxx
+  NEXT_PUBLIC_CLERK_SIGN_IN_URL         /sign-in
+  NEXT_PUBLIC_CLERK_SIGN_UP_URL         /sign-up
+  NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL   /dashboard
+  NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL   /dashboard
+
+  NEXT_PUBLIC_SUPABASE_URL              https://xxxxx.supabase.co
+  NEXT_PUBLIC_SUPABASE_ANON_KEY         eyJxxxx...
+  SUPABASE_SERVICE_KEY                  eyJxxxx...  ← NEVER expose this
+
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY    pk_test_xxxx
+  STRIPE_SECRET_KEY                     sk_test_xxxx
+  STRIPE_WEBHOOK_SECRET                 whsec_xxxx  ← add after Step 6
+  STRIPE_PRICE_STARTER                  price_xxxx  ← from Step 3
+  STRIPE_PRICE_GROWTH                   price_xxxx
+  STRIPE_PRICE_PRO                      price_xxxx
+  STRIPE_PRICE_UNLIMITED                price_xxxx
+
+  ANTHROPIC_API_KEY                     sk-ant-xxxx
+  NEXT_PUBLIC_APP_URL                   https://cvtailor-pro-xxxx.vercel.app
+
+After adding all variables:
+→ Deployments → three dots on latest → Redeploy
+
+────────────────────────────────────────────────────────────────
+STEP 6 — SET UP STRIPE WEBHOOK (5 mins)
+────────────────────────────────────────────────────────────────
+Now that you have your Vercel URL:
+
+1. Stripe Dashboard → Developers → Webhooks → Add Endpoint
+2. Endpoint URL: https://YOUR-VERCEL-URL.vercel.app/api/stripe/webhook
+3. Select these events:
+   ✓ checkout.session.completed
+   ✓ invoice.paid
+   ✓ customer.subscription.deleted
+   ✓ invoice.payment_failed
+4. Click Add Endpoint
+5. Copy the Signing Secret → whsec_xxxx
+
+6. Go back to Vercel → add STRIPE_WEBHOOK_SECRET = whsec_xxxx
+7. Redeploy on Vercel
+
+────────────────────────────────────────────────────────────────
+STEP 7 — CONNECT YOUR GODADDY DOMAIN (5 mins)
+────────────────────────────────────────────────────────────────
+1. Vercel → your project → Settings → Domains → Add Domain
+2. Type: your-domain.co.uk → click Add
+3. Vercel shows DNS records to add — usually:
+   • Type A      Name: @     Value: 76.76.21.21
+   • Type CNAME  Name: www   Value: cname.vercel-dns.com
+
+4. Log into GoDaddy → My Products → DNS → Manage
+5. Add the records Vercel gives you (delete any existing A records first)
+6. Wait 10–30 mins for DNS to propagate
+7. Come back to Vercel → your domain should show ✓ Valid
+
+────────────────────────────────────────────────────────────────
+STEP 8 — TEST EVERYTHING (5 mins)
+────────────────────────────────────────────────────────────────
+A. Test the free trial:
+   1. Visit your domain (not logged in)
+   2. Click "Try it free" → go through trial → should work
+   3. Try again in same browser → should show "trial already used"
+
+B. Test sign-up and subscription:
+   1. Sign up for a new account
+   2. Go to /pricing → click "Get Starter"
+   3. Use Stripe test card: 4242 4242 4242 4242
+      Expiry: any future date | CVC: any 3 digits
+   4. After payment → redirect to /dashboard
+   5. Check your Supabase → Table Editor → users
+      Should show: plan=starter, cv_limit=10, subscription_status=active
+
+C. Test CV tailoring:
+   1. Upload a CV → paste a JD → click Tailor
+   2. Should work and show usage count increase
+   3. Download .docx → open in Word
+
+D. Test subscription management:
+   1. Click "Manage plan" in dashboard nav
+   2. Opens Stripe Customer Portal → can cancel/upgrade
+
+────────────────────────────────────────────────────────────────
+STEP 9 — GO LIVE WITH REAL PAYMENTS
+────────────────────────────────────────────────────────────────
+When testing is complete:
+
+1. In Stripe → switch to LIVE MODE (top-left toggle)
+2. Create the same 4 products again in live mode → get live price IDs
+3. Get live API keys: pk_live_, sk_live_
+4. Create a new webhook endpoint for LIVE mode → get live whsec_
+5. Update in Vercel → Environment Variables:
+   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY → pk_live_xxxx
+   STRIPE_SECRET_KEY                 → sk_live_xxxx
+   STRIPE_WEBHOOK_SECRET             → whsec_xxxx (live)
+   STRIPE_PRICE_STARTER              → price_xxxx (live)
+   STRIPE_PRICE_GROWTH               → price_xxxx (live)
+   STRIPE_PRICE_PRO                  → price_xxxx (live)
+   STRIPE_PRICE_UNLIMITED            → price_xxxx (live)
+6. Redeploy → you're taking real money! 💰
+
+────────────────────────────────────────────────────────────────
+PRICING SUMMARY
+────────────────────────────────────────────────────────────────
+  Free Trial    1 CV    One-time per device, no account needed
+  Starter       £3/mo   10 CVs per month
+  Growth        £5/mo   20 CVs per month
+  Pro           £10/mo  50 CVs per month
+  Unlimited     £18/mo  250 CVs per month
+
+Usage resets on the billing anniversary each month.
+Stripe handles all renewals, failures, and cancellations automatically.
+
+────────────────────────────────────────────────────────────────
+TO CHANGE PRICES IN FUTURE
+────────────────────────────────────────────────────────────────
+1. Create new price in Stripe for the product
+2. Update the price ID in Vercel environment variables
+3. Redeploy — existing subscribers keep old price until they change
+
+────────────────────────────────────────────────────────────────
+IF SOMETHING GOES WRONG
+────────────────────────────────────────────────────────────────
+• Vercel logs:   Project → Functions tab → view live logs
+• Supabase logs: Logs → API or Postgres
+• Stripe logs:   Developers → Events (see every webhook attempt)
+• Clerk logs:    Dashboard → Logs
+
+Common issues:
+• "Webhook signature failed" → STRIPE_WEBHOOK_SECRET is wrong
+• Credits not adding → webhook URL is wrong or not redeployed
+• Sign-in not working → Clerk keys wrong or redirect URLs not set
+• Build failing → check Vercel logs, usually a missing env var
+
+═══════════════════════════════════════════════════════════════

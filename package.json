@@ -1,0 +1,24 @@
+{
+  "name": "cv-tailor-pro",
+  "version": "2.0.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^4.29.0",
+    "@supabase/supabase-js": "^2.39.0",
+    "adm-zip": "^0.5.18",
+    "mammoth": "^1.6.0",
+    "micro": "^10.0.1",
+    "adm-zip": "^0.5.10",
+    "next": "14.2.25",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "stripe": "^14.10.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
