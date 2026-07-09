@@ -10,6 +10,7 @@ export default authMiddleware({
     "/api/trial/check",
     "/api/trial/use",
     "/api/tailor/trial",
+    "/api/tailor-docx", // made public — route now does its own auth/trial check internally (see tailor-docx.js)
   ],
 });
 
