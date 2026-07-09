@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 
-// ── Device fingerprint ────────────────────────────────────────────────────────
+// -- Device fingerprint ------------------------------------------------------
 function getFingerprint() {
   if (typeof window === "undefined") return "ssr";
   try {
@@ -16,12 +16,12 @@ function getFingerprint() {
   return fp;
 }
 
-// ── XML escape ────────────────────────────────────────────────────────────────
+// -- XML escape ---------------------------------------------------------------
 function escXml(s) {
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");
 }
 
-// ── Extract paragraphs from DOCX XML ─────────────────────────────────────────
+// -- Extract paragraphs from DOCX XML -----------------------------------------
 function extractParagraphsFromXml(xml) {
   const paragraphs = [];
   const paraMatches = xml.match(/<w:p[ >][\s\S]*?<\/w:p>/g) || [];
@@ -33,7 +33,7 @@ function extractParagraphsFromXml(xml) {
   return paragraphs;
 }
 
-// ── Inject tailored text back into DOCX XML ───────────────────────────────────
+// -- Inject tailored text back into DOCX XML ----------------------------------
 function injectTailoredIntoXml(xml, tailoredMap) {
   let paraIndex = 0;
   return xml.replace(/<w:p[ >][\s\S]*?<\/w:p>/g, (paraXml) => {
@@ -50,7 +50,7 @@ function injectTailoredIntoXml(xml, tailoredMap) {
   });
 }
 
-// ── Pure JS ZIP builder ───────────────────────────────────────────────────────
+// -- Pure JS ZIP builder (always writes entries as STORED/uncompressed) ------
 function buildZip(files) {
   const enc = new TextEncoder();
   const lhs = [], cd = []; let offset = 0;
@@ -73,30 +73,53 @@ function buildZip(files) {
   return res;
 }
 
-// ── Read ZIP entries (stored only, no deflate needed for DOCX XML) ────────────
-function readZipEntry(buffer, targetName) {
-  const view = new DataView(buffer.buffer || Buffer.from(buffer).buffer);
+// -- Inflate raw DEFLATE data using the browser's built-in DecompressionStream
+// (real Word-saved .docx files store their parts DEFLATE-compressed, not
+// stored raw -- this was the missing piece causing empty/garbled extraction)
+async function inflateRaw(bytes) {
+  if (typeof DecompressionStream === "undefined") {
+    throw new Error("Your browser doesn't support DOCX decompression. Please use a recent version of Chrome, Edge, or Firefox.");
+  }
+  const ds = new DecompressionStream("deflate-raw");
+  const writer = ds.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const reader = ds.readable.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.length;
+  }
+  const out = new Uint8Array(total);
+  let pos = 0;
+  for (const c of chunks) { out.set(c, pos); pos += c.length; }
+  return out;
+}
+
+// -- Read all ZIP entries, decompressing DEFLATE (method 8) as needed --------
+async function readZipEntries(buffer) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const dec = new TextDecoder();
 
-  // Find EOCD
   let eocdOff = -1;
   for (let i = bytes.length - 22; i >= 0; i--) {
     if (bytes[i] === 0x50 && bytes[i+1] === 0x4b && bytes[i+2] === 0x05 && bytes[i+3] === 0x06) { eocdOff = i; break; }
   }
-  if (eocdOff === -1) throw new Error("Not a valid ZIP");
+  if (eocdOff === -1) throw new Error("Not a valid ZIP/DOCX file");
 
-  const cdOff = new DataView(bytes.buffer).getUint32(eocdOff + 16, true);
-  const cdSize = new DataView(bytes.buffer).getUint32(eocdOff + 12, true);
-  const entries = {};
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const cdOff = dv.getUint32(eocdOff + 16, true);
+  const cdSize = dv.getUint32(eocdOff + 12, true);
+
+  const rawEntries = [];
   let pos = cdOff;
-
   while (pos < cdOff + cdSize) {
     if (bytes[pos] !== 0x50 || bytes[pos+1] !== 0x4b || bytes[pos+2] !== 0x01 || bytes[pos+3] !== 0x02) break;
-    const dv = new DataView(bytes.buffer);
     const method = dv.getUint16(pos + 10, true);
     const compSize = dv.getUint32(pos + 20, true);
-    const uncompSize = dv.getUint32(pos + 24, true);
     const nameLen = dv.getUint16(pos + 28, true);
     const extraLen = dv.getUint16(pos + 30, true);
     const commentLen = dv.getUint16(pos + 32, true);
@@ -106,14 +129,26 @@ function readZipEntry(buffer, targetName) {
     const lnLen = dv.getUint16(localOff + 26, true);
     const leLen = dv.getUint16(localOff + 28, true);
     const dataOff = localOff + 30 + lnLen + leLen;
+    const rawData = bytes.slice(dataOff, dataOff + compSize);
 
-    entries[name] = { data: bytes.slice(dataOff, dataOff + (method === 0 ? uncompSize : compSize)), method, uncompSize };
+    rawEntries.push({ name, method, rawData });
     pos += 46 + nameLen + extraLen + commentLen;
+  }
+
+  const entries = {};
+  for (const e of rawEntries) {
+    if (e.method === 0) {
+      entries[e.name] = e.rawData; // already uncompressed
+    } else if (e.method === 8) {
+      entries[e.name] = await inflateRaw(e.rawData); // DEFLATE -> decompress
+    } else {
+      throw new Error(`Unsupported ZIP compression method (${e.method}) in "${e.name}"`);
+    }
   }
   return entries;
 }
 
-// ── Download helper ───────────────────────────────────────────────────────────
+// -- Download helper ------------------------------------------------------------
 function downloadBytes(bytes, filename) {
   const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
   const url = URL.createObjectURL(blob), a = document.createElement("a");
@@ -121,7 +156,7 @@ function downloadBytes(bytes, filename) {
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
 }
 
-// ── Rebuild DOCX from scratch (for non-DOCX or fallback) ─────────────────────
+// -- Rebuild DOCX from scratch (for non-DOCX or fallback) --------------------
 function buildFallbackDocx(text) {
   const enc = new TextEncoder();
   const sections = text.split("\n").map(raw => {
@@ -183,17 +218,17 @@ export default function Trial() {
     setError(""); setCvFile(file); setCvData(null);
 
     if (isDocx) {
-      // Read DOCX as ArrayBuffer, extract XML client-side
       const arrayBuffer = await file.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
       try {
-        const entries = readZipEntry(bytes, "word/document.xml");
-        const docEntry = entries["word/document.xml"];
-        if (!docEntry) throw new Error("No document.xml found");
+        const entries = await readZipEntries(bytes);
+        const docBytes = entries["word/document.xml"];
+        if (!docBytes) throw new Error("No document.xml found — this may not be a valid Word file");
         const dec = new TextDecoder();
-        const docXml = dec.decode(docEntry.data);
+        const docXml = dec.decode(docBytes);
         const paragraphs = extractParagraphsFromXml(docXml);
-        setCvData({ type:"docx", paragraphs, docXml, zipEntries: entries, zipBytes: bytes });
+        if (paragraphs.length === 0) throw new Error("No text paragraphs found in this document");
+        setCvData({ type:"docx", paragraphs, docXml, zipEntries: entries });
       } catch (e) {
         setError("Could not read DOCX: " + e.message + ". Try saving as TXT.");
       }
@@ -217,7 +252,6 @@ export default function Trial() {
       const filename = (cvFile?.name ? cvFile.name.replace(/\.[^.]+$/,"") + "_tailored" : "tailored_cv") + ".docx";
 
       if (cvData.type === "docx") {
-        // Client-side DOCX processing: send paragraphs to server, get tailored map back
         const res = await fetch("/api/tailor-docx", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -228,20 +262,18 @@ export default function Trial() {
 
         const tailoredMap = data.tailoredMap || {};
 
-        // Inject tailored text back into original XML (client-side)
         const newXml = injectTailoredIntoXml(cvData.docXml, tailoredMap);
         const enc = new TextEncoder();
 
-        // Rebuild ZIP with all original entries + updated document.xml
+        // zipEntries values are now plain decompressed Uint8Array (not {data,...})
         const newFiles = {};
-        for (const [name, entry] of Object.entries(cvData.zipEntries)) {
-          newFiles[name] = name === "word/document.xml" ? enc.encode(newXml) : entry.data;
+        for (const [name, data] of Object.entries(cvData.zipEntries)) {
+          newFiles[name] = name === "word/document.xml" ? enc.encode(newXml) : data;
         }
         const newDocxBytes = buildZip(newFiles);
         downloadBytes(newDocxBytes, filename);
 
       } else {
-        // TXT/PDF: use original trial endpoint
         const body = cvData.type === "txt"
           ? { fingerprint: fp, cvText: cvData.text, jd, fileName: cvFile?.name }
           : { fingerprint: fp, cvText: "__PDF__" + cvData.b64, jd, fileName: cvFile?.name };
@@ -254,7 +286,6 @@ export default function Trial() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
 
-        // Build basic DOCX from markdown response
         const docxBytes = buildFallbackDocx(data.tailored);
         setTimeout(() => downloadBytes(docxBytes, filename), 300);
       }
